@@ -77,6 +77,8 @@ export default function App() {
   const {
     connectionStatus,
     connected,
+    apiUrl,
+    wsUrl,
     messages,
     thinking,
     selfDriving,
@@ -716,14 +718,15 @@ export default function App() {
                   </span>
                 </p>
                 <p>
-                  API: <span className="mono">http://localhost:8000</span>
+                  API: <span className="mono">{apiUrl}</span>
                 </p>
                 <p>
-                  WebSocket: <span className="mono">ws://localhost:8000/ws</span>
+                  WebSocket: <span className="mono">{wsUrl}</span>
                 </p>
                 <p className="text-xs" style={{ color: '#5a6175' }}>
-                  Start the LangGraph backend with <span className="mono">python start_backend.py</span> from the
-                  stock_analysis project.
+                  Set <span className="mono">VITE_API_URL</span> and <span className="mono">VITE_WS_URL</span> in
+                  Vercel Environments, then redeploy. On Render, set{' '}
+                  <span className="mono">CORS_ORIGINS</span> to this site URL.
                 </p>
               </div>
             </div>

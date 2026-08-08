@@ -23,6 +23,10 @@ export class BackendClient {
     return this.apiUrl
   }
 
+  get websocketUrl(): string {
+    return this.wsUrl
+  }
+
   connect(): void {
     this.shouldReconnect = true
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {

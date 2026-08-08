@@ -464,6 +464,8 @@ export function useStockBackend() {
     () => ({
       connectionStatus,
       connected,
+      apiUrl: backend.apiBase,
+      wsUrl: backend.websocketUrl,
       messages,
       thinking,
       selfDriving,
