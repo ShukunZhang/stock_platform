@@ -1,0 +1,10 @@
+{
+  "description": "Provides a modern, user-friendly interface for stock analysis with interactive chat, customizable settings, and intuitive controls for investors.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

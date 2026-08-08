@@ -1,0 +1,14 @@
+﻿# Root
+.DS_Store
+.idea/
+.vscode/
+*.log
+.env
+**/.env
+**/node_modules/
+**/dist/
+**/__pycache__/
+**/.venv/
+**/venv/
+**/data/
+**/logs/

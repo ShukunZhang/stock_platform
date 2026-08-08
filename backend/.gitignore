@@ -1,0 +1,23 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+venv312/
+.env
+*.log
+.pytest_cache/
+.mypy_cache/
+
+# Data / runtime
+data/
+logs/
+temp/
+web_ui/data/
+web_ui/logs/
+web_ui/temp/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
