@@ -29,6 +29,11 @@ _DEFAULT_CORS_ORIGINS: List[str] = [
 ]
 
 
+def _normalize_origin(origin: str) -> str:
+    """Browsers send Origin without a trailing slash — normalize env values."""
+    return origin.strip().rstrip("/")
+
+
 def _parse_cors_origins(raw: str) -> List[str]:
     """Parse CORS origins from JSON array or comma-separated string."""
     if not raw:
@@ -38,10 +43,18 @@ def _parse_cors_origins(raw: str) -> List[str]:
         try:
             parsed = json.loads(stripped)
             if isinstance(parsed, list):
-                return [str(part).strip() for part in parsed if str(part).strip()]
+                return [
+                    _normalize_origin(str(part))
+                    for part in parsed
+                    if _normalize_origin(str(part))
+                ]
         except json.JSONDecodeError:
             pass
-    return [part.strip() for part in stripped.split(",") if part.strip()]
+    return [
+        _normalize_origin(part)
+        for part in stripped.split(",")
+        if _normalize_origin(part)
+    ]
 
 
 class Settings(BaseSettings):

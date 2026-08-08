@@ -229,8 +229,16 @@ export function useStockBackend() {
     return p
   }, [refreshQuotes])
 
+  // Keep the socket lifecycle independent of self-driving / profile state.
+  // Including selfDriving in deps was reconnecting on every status update.
   useEffect(() => {
     backend.connect()
+    return () => {
+      backend.disconnect()
+    }
+  }, [])
+
+  useEffect(() => {
     const offStatus = backend.onStatus(setConnectionStatus)
 
     const offAny = backend.onAny((message) => {
@@ -383,9 +391,8 @@ export function useStockBackend() {
       offStatus()
       offAny()
       window.clearInterval(timer)
-      backend.disconnect()
     }
-  }, [loadProfile, patchAgent, refreshQuotes, selfDriving?.symbols])
+  }, [loadProfile, patchAgent, refreshQuotes])
 
   const sendQuery = useCallback(
     (query: string) => {
