@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
 import { backend } from '../services/backend'
 import type {
@@ -210,11 +210,21 @@ export function useStockBackend() {
     )
   }, [])
 
+  // Guards against pile-ups of overlapping quote fetches — e.g. the 60s
+  // timer firing again while a previous request is still stuck mid-restart.
+  const quotesInFlight = useRef(false)
+
   const refreshQuotes = useCallback(async (symbols?: string[]) => {
-    const data = await backend.fetchQuotes(symbols)
-    const next = (data.items || []).map(quoteToStock).filter((s) => s.ticker)
-    if (next.length) setStocks(next)
-    return next
+    if (quotesInFlight.current) return []
+    quotesInFlight.current = true
+    try {
+      const data = await backend.fetchQuotes(symbols)
+      const next = (data.items || []).map(quoteToStock).filter((s) => s.ticker)
+      if (next.length) setStocks(next)
+      return next
+    } finally {
+      quotesInFlight.current = false
+    }
   }, [])
 
   const loadProfile = useCallback(async () => {
@@ -402,6 +412,19 @@ export function useStockBackend() {
       window.clearInterval(timer)
     }
   }, [loadProfile, patchAgent, refreshQuotes])
+
+  // Quotes only refreshed on a 60s timer, so a backend restart (WS drops
+  // then reconnects) could leave prices stale/stuck until the next tick —
+  // or forever if that tick's request was the one that hung mid-restart.
+  // Refresh immediately whenever the socket (re)connects instead.
+  const wasConnected = useRef(false)
+  useEffect(() => {
+    const isConnected = connectionStatus === 'connected'
+    if (isConnected && !wasConnected.current) {
+      void refreshQuotes(profile?.watchlist).catch(() => undefined)
+    }
+    wasConnected.current = isConnected
+  }, [connectionStatus, profile?.watchlist, refreshQuotes])
 
   const sendQuery = useCallback(
     (query: string) => {

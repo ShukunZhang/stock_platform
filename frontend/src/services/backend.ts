@@ -6,6 +6,28 @@ const DEFAULT_API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 /** Keepalive under Render/Cloudflare idle proxies (often ~55–100s). */
 const CLIENT_PING_MS = 25_000
 
+/**
+ * Requests hitting a Render instance mid-restart can hang instead of
+ * erroring (dropped/queued connection). Without a timeout the browser's
+ * per-origin connection limit fills up with stuck requests and every
+ * later fetch (including quote refreshes) queues forever.
+ */
+const REQUEST_TIMEOUT_MS = 15_000
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 type MessageHandler = (message: BackendMessage) => void
 type StatusHandler = (status: ConnectionStatus) => void
 
@@ -149,13 +171,13 @@ export class BackendClient {
   }
 
   async fetchStatus(): Promise<Record<string, unknown>> {
-    const res = await fetch(`${this.apiUrl}/api/status`)
+    const res = await fetchWithTimeout(`${this.apiUrl}/api/status`)
     if (!res.ok) throw new Error(`Status failed: ${res.status}`)
     return res.json()
   }
 
   async fetchSelfDriving(): Promise<SelfDrivingStatus> {
-    const res = await fetch(`${this.apiUrl}/api/self-driving`)
+    const res = await fetchWithTimeout(`${this.apiUrl}/api/self-driving`)
     if (!res.ok) throw new Error(`Self-driving status failed: ${res.status}`)
     return res.json()
   }
@@ -166,7 +188,7 @@ export class BackendClient {
     interval_minutes?: number
     analyze_on_tick?: boolean
   }): Promise<SelfDrivingStatus> {
-    const res = await fetch(`${this.apiUrl}/api/self-driving`, {
+    const res = await fetchWithTimeout(`${this.apiUrl}/api/self-driving`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -176,13 +198,13 @@ export class BackendClient {
   }
 
   async forceTick(): Promise<Record<string, unknown>> {
-    const res = await fetch(`${this.apiUrl}/api/self-driving/tick`, { method: 'POST' })
+    const res = await fetchWithTimeout(`${this.apiUrl}/api/self-driving/tick`, { method: 'POST' })
     if (!res.ok) throw new Error(`Force tick failed: ${res.status}`)
     return res.json()
   }
 
   async fetchProfile(userId = 'default'): Promise<import('../types').UserProfile> {
-    const res = await fetch(`${this.apiUrl}/api/profile?user_id=${encodeURIComponent(userId)}`)
+    const res = await fetchWithTimeout(`${this.apiUrl}/api/profile?user_id=${encodeURIComponent(userId)}`)
     if (!res.ok) throw new Error(`Profile failed: ${res.status}`)
     return res.json()
   }
@@ -196,7 +218,7 @@ export class BackendClient {
     },
     userId = 'default',
   ): Promise<import('../types').UserProfile> {
-    const res = await fetch(`${this.apiUrl}/api/profile?user_id=${encodeURIComponent(userId)}`, {
+    const res = await fetchWithTimeout(`${this.apiUrl}/api/profile?user_id=${encodeURIComponent(userId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
@@ -206,7 +228,7 @@ export class BackendClient {
   }
 
   async appendChat(messages: Array<Record<string, unknown>>, userId = 'default') {
-    const res = await fetch(`${this.apiUrl}/api/profile/chat?user_id=${encodeURIComponent(userId)}`, {
+    const res = await fetchWithTimeout(`${this.apiUrl}/api/profile/chat?user_id=${encodeURIComponent(userId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages }),
@@ -220,7 +242,9 @@ export class BackendClient {
     quotes: Record<string, import('../types').QuoteItem>
   }> {
     const qs = symbols?.length ? `?symbols=${encodeURIComponent(symbols.join(','))}` : ''
-    const res = await fetch(`${this.apiUrl}/api/quotes${qs}`)
+    // Quotes call several live providers sequentially server-side; give it
+    // more headroom than the default timeout, especially for a full watchlist.
+    const res = await fetchWithTimeout(`${this.apiUrl}/api/quotes${qs}`, {}, 30_000)
     if (!res.ok) throw new Error(`Quotes failed: ${res.status}`)
     return res.json()
   }
