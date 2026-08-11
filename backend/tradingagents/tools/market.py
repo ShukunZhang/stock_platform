@@ -1,4 +1,4 @@
-"""Market data tools used by the LangGraph agent loop (FMP / Alpha Vantage)."""
+"""Market data tools used by the LangGraph agent loop (FMP / Alpha Vantage / Yahoo)."""
 
 from __future__ import annotations
 

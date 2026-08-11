@@ -57,7 +57,11 @@ class TestFormatters:
 
 
 class TestFetchQuoteMockPath:
-    def test_fetch_quote_mock_without_keys(self, clear_market_keys):
+    def test_fetch_quote_mock_when_all_live_providers_fail(self, clear_market_keys, monkeypatch):
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("forced provider failure")
+
+        monkeypatch.setattr(mp, "_get_json", boom)
         quote = mp.fetch_quote("aapl")
         assert quote["symbol"] == "AAPL"
         assert quote["mock"] is True
@@ -66,29 +70,70 @@ class TestFetchQuoteMockPath:
         assert quote["price"] > 0
         assert "change" in quote
         assert "change_percent" in quote
+        assert "apikey=" not in (quote.get("mock_reason") or "")
 
-    def test_fetch_quotes_skips_empty_and_keys_by_symbol(self, clear_market_keys):
+    def test_fetch_quotes_skips_empty_and_keys_by_symbol(self, clear_market_keys, monkeypatch):
+        monkeypatch.setattr(
+            mp,
+            "fetch_quote",
+            lambda symbol: {"symbol": symbol.upper(), "mock": True, "provider": "mock"},
+        )
         out = mp.fetch_quotes(["AAPL", "", "MSFT"])
         assert set(out.keys()) == {"AAPL", "MSFT"}
         assert out["AAPL"]["mock"] is True
 
 
 class TestFetchHistoryAndFundamentalsAndTechnicals:
-    def test_fetch_history_mock(self, clear_market_keys):
+    def test_fetch_history_mock_when_providers_fail(self, clear_market_keys, monkeypatch):
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("forced provider failure")
+
+        monkeypatch.setattr(mp, "_get_json", boom)
         hist = mp.fetch_history("NVDA", limit=10)
         assert hist["symbol"] == "NVDA"
         assert hist["mock"] is True
         assert len(hist["bars"]) == 10
         assert {"date", "open", "high", "low", "close", "volume"} <= set(hist["bars"][0])
 
-    def test_fetch_fundamentals_mock(self, clear_market_keys):
+    def test_fetch_fundamentals_mock(self, clear_market_keys, monkeypatch):
+        monkeypatch.setattr(
+            mp,
+            "fetch_quote",
+            lambda symbol: {"symbol": symbol.upper(), "price": 100.0, "mock": False},
+        )
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("forced provider failure")
+
+        monkeypatch.setattr(mp, "_get_json", boom)
         fund = mp.fetch_fundamentals("TSLA")
         assert fund["symbol"] == "TSLA"
         assert fund["mock"] is True
         assert fund["trailingPE"] == 28.5
         assert "[MOCK]" in fund["shortName"]
 
-    def test_fetch_technicals_from_mock_history(self, clear_market_keys):
+    def test_fetch_technicals_from_history(self, clear_market_keys, monkeypatch):
+        bars = [
+            {
+                "date": f"2024-01-{i:02d}",
+                "open": 100 + i,
+                "high": 101 + i,
+                "low": 99 + i,
+                "close": 100 + i,
+                "volume": 1_000_000,
+            }
+            for i in range(1, 41)
+        ]
+        monkeypatch.setattr(
+            mp,
+            "fetch_history",
+            lambda symbol, limit=60: {
+                "symbol": symbol.upper(),
+                "bars": bars[:limit],
+                "provider": "yahoo",
+                "mock": False,
+            },
+        )
         tech = mp.fetch_technicals("MSFT")
         assert tech["symbol"] == "MSFT"
         assert "sma20" in tech
@@ -96,6 +141,7 @@ class TestFetchHistoryAndFundamentalsAndTechnicals:
         assert "ema12" in tech
         assert "rsi14" in tech
         assert tech["trend_hint"] in {"bullish", "bearish", "neutral"}
+        assert tech["mock"] is False
 
     def test_fetch_technicals_insufficient_history_branch(self, clear_market_keys, monkeypatch):
         monkeypatch.setattr(
@@ -125,7 +171,8 @@ class TestProviderCascadeWithFmp:
         monkeypatch.setenv("FMP_API_KEY", "test-key")
         monkeypatch.delenv("ALPHA_VANTAGE_API_KEY", raising=False)
 
-        def fake_get_json(url, params=None, timeout=12.0):
+        def fake_get_json(url, params=None, timeout=12.0, headers=None):
+            assert "/stable/quote" in url
             return [
                 {
                     "price": 100.0,
@@ -143,3 +190,36 @@ class TestProviderCascadeWithFmp:
         assert quote["mock"] is False
         assert quote["price"] == 100.0
         assert quote["change"] == 2.0
+
+
+class TestYahooFallbackAndRedaction:
+    def test_fetch_quote_falls_back_to_yahoo(self, monkeypatch, clear_market_keys):
+        def fake_get_json(url, params=None, timeout=12.0, headers=None):
+            assert "finance.yahoo.com" in url
+            return {
+                "chart": {
+                    "result": [
+                        {
+                            "meta": {
+                                "regularMarketPrice": 306.2,
+                                "chartPreviousClose": 309.38,
+                                "shortName": "Apple Inc.",
+                                "regularMarketVolume": 12_000_000,
+                            }
+                        }
+                    ]
+                }
+            }
+
+        monkeypatch.setattr(mp, "_get_json", fake_get_json)
+        quote = mp.fetch_quote("AAPL")
+        assert quote["provider"] == "yahoo"
+        assert quote["mock"] is False
+        assert quote["price"] == 306.2
+        assert quote["previous_close"] == 309.38
+
+    def test_redact_secrets_strips_apikey(self):
+        raw = "FMP: 403 for url 'https://example.com/x?apikey=super-secret-key'"
+        cleaned = mp._redact_secrets(raw)
+        assert "super-secret-key" not in cleaned
+        assert "apikey=***" in cleaned

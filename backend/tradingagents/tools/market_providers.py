@@ -1,18 +1,28 @@
-"""Market data providers: FMP → Alpha Vantage → mock.
+"""Market data providers: FMP (stable) → Alpha Vantage → Yahoo → mock.
 
-Avoids flaky Yahoo/yfinance rate limits for local testing.
+FMP legacy /api/v3 endpoints return 403 for new keys; use /stable instead.
+Yahoo Finance chart API is used as a free no-key fallback before mock data.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+FMP_STABLE = "https://financialmodelingprep.com/stable"
+YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart"
+YAHOO_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; StockPlatform/1.0; +https://github.com/ShukunZhang/stock_platform)",
+    "Accept": "application/json",
+}
 
 _MOCK_QUOTES: dict[str, dict[str, Any]] = {
     "AAPL": {"price": 211.56, "previous_close": 212.94, "currency": "USD", "market_cap": 3.18e12, "name": "Apple Inc"},
@@ -23,6 +33,12 @@ _MOCK_QUOTES: dict[str, dict[str, Any]] = {
     "GOOGL": {"price": 182.33, "previous_close": 181.59, "currency": "USD", "market_cap": 2.24e12, "name": "Alphabet Inc"},
 }
 
+_SECRET_PATTERNS = (
+    re.compile(r"(apikey=)([^&\s]+)", re.IGNORECASE),
+    re.compile(r"(api_key=)([^&\s]+)", re.IGNORECASE),
+    re.compile(r"(authorization:\s*)(\S+)", re.IGNORECASE),
+)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -30,6 +46,22 @@ def _now() -> str:
 
 def _sym(symbol: str) -> str:
     return symbol.upper().strip()
+
+
+def _redact_secrets(text: str) -> str:
+    """Strip API keys from error strings so they never reach clients/logs."""
+    out = str(text)
+    for pattern in _SECRET_PATTERNS:
+        out = pattern.sub(r"\1***", out)
+    # Also strip bare key-like query values if a full URL is embedded.
+    try:
+        parts = urlsplit(out)
+        if parts.query:
+            safe_q = re.sub(r"(?i)((?:api)?key)=([^&]+)", r"\1=***", parts.query)
+            out = urlunsplit((parts.scheme, parts.netloc, parts.path, safe_q, parts.fragment))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def _base_mock(symbol: str) -> dict[str, Any]:
@@ -56,11 +88,137 @@ def _av_key() -> str:
     return os.getenv("ALPHA_VANTAGE_API_KEY", "").strip()
 
 
-def _get_json(url: str, params: dict[str, Any] | None = None, timeout: float = 12.0) -> Any:
-    with httpx.Client(timeout=timeout) as client:
+def _get_json(
+    url: str,
+    params: dict[str, Any] | None = None,
+    timeout: float = 12.0,
+    headers: dict[str, str] | None = None,
+) -> Any:
+    with httpx.Client(timeout=timeout, headers=headers) as client:
         resp = client.get(url, params=params)
         resp.raise_for_status()
         return resp.json()
+
+
+def _err(prefix: str, exc: Exception) -> str:
+    return _redact_secrets(f"{prefix}: {exc}")
+
+
+def _normalize_quote(
+    *,
+    symbol: str,
+    name: str,
+    price: float,
+    prev: float,
+    volume: Any,
+    market_cap: Any,
+    provider: str,
+    change: float | None = None,
+    change_percent: float | None = None,
+) -> dict[str, Any]:
+    if change is None:
+        change = price - prev
+    if change_percent is None:
+        change_percent = (change / prev * 100) if prev else 0.0
+    return {
+        "symbol": symbol,
+        "name": name or symbol,
+        "price": round(price, 4),
+        "previous_close": round(prev, 4),
+        "change": round(change, 4),
+        "change_percent": round(change_percent, 4),
+        "volume": volume,
+        "market_cap": market_cap,
+        "currency": "USD",
+        "provider": provider,
+        "mock": False,
+        "as_of": _now(),
+    }
+
+
+def _quote_from_fmp(symbol: str) -> dict[str, Any] | None:
+    data = _get_json(
+        f"{FMP_STABLE}/quote",
+        {"symbol": symbol, "apikey": _fmp_key()},
+    )
+    if not isinstance(data, list) or not data:
+        return None
+    row = data[0]
+    price = float(row.get("price") or 0)
+    if price <= 0:
+        return None
+    prev = float(row.get("previousClose") or row.get("previous_close") or price)
+    change = row.get("change")
+    pct = row.get("changePercentage") or row.get("changesPercentage")
+    return _normalize_quote(
+        symbol=symbol,
+        name=str(row.get("name") or symbol),
+        price=price,
+        prev=prev,
+        volume=row.get("volume"),
+        market_cap=row.get("marketCap"),
+        provider="fmp",
+        change=float(change) if change is not None else None,
+        change_percent=float(pct) if pct is not None else None,
+    )
+
+
+def _quote_from_alpha_vantage(symbol: str) -> dict[str, Any] | None:
+    data = _get_json(
+        "https://www.alphavantage.co/query",
+        {
+            "function": "GLOBAL_QUOTE",
+            "symbol": symbol,
+            "apikey": _av_key(),
+        },
+    )
+    if isinstance(data, dict) and data.get("Note"):
+        raise RuntimeError(f"rate limited: {data.get('Note')}")
+    if isinstance(data, dict) and data.get("Information"):
+        raise RuntimeError(f"info: {data.get('Information')}")
+    q = (data or {}).get("Global Quote") or {}
+    price = float(q.get("05. price") or 0)
+    if price <= 0:
+        return None
+    prev = float(q.get("08. previous close") or price)
+    change = float(q.get("09. change") or (price - prev))
+    pct_raw = str(q.get("10. change percent") or "0").replace("%", "")
+    return _normalize_quote(
+        symbol=symbol,
+        name=symbol,
+        price=price,
+        prev=prev,
+        volume=int(float(q.get("06. volume") or 0)),
+        market_cap=None,
+        provider="alpha_vantage",
+        change=change,
+        change_percent=float(pct_raw or 0),
+    )
+
+
+def _quote_from_yahoo(symbol: str) -> dict[str, Any] | None:
+    data = _get_json(
+        f"{YAHOO_CHART}/{symbol}",
+        {"interval": "1d", "range": "5d"},
+        headers=YAHOO_HEADERS,
+    )
+    result = ((data or {}).get("chart") or {}).get("result") or []
+    if not result:
+        return None
+    meta = result[0].get("meta") or {}
+    price = float(meta.get("regularMarketPrice") or meta.get("postMarketPrice") or 0)
+    if price <= 0:
+        return None
+    prev = float(meta.get("chartPreviousClose") or meta.get("previousClose") or price)
+    return _normalize_quote(
+        symbol=symbol,
+        name=str(meta.get("shortName") or meta.get("longName") or symbol),
+        price=price,
+        prev=prev,
+        volume=meta.get("regularMarketVolume"),
+        market_cap=meta.get("marketCap"),
+        provider="yahoo",
+    )
 
 
 def fetch_quote(symbol: str) -> dict[str, Any]:
@@ -68,76 +226,37 @@ def fetch_quote(symbol: str) -> dict[str, Any]:
     symbol = _sym(symbol)
     errors: list[str] = []
 
-    # 1) Financial Modeling Prep
+    # 1) Financial Modeling Prep (stable API)
     if _fmp_key():
         try:
-            data = _get_json(
-                f"https://financialmodelingprep.com/api/v3/quote/{symbol}",
-                {"apikey": _fmp_key()},
-            )
-            if isinstance(data, list) and data:
-                row = data[0]
-                price = float(row.get("price") or 0)
-                prev = float(row.get("previousClose") or row.get("previous_close") or price)
-                if price > 0:
-                    change = price - prev
-                    pct = (change / prev * 100) if prev else float(row.get("changesPercentage") or 0)
-                    return {
-                        "symbol": symbol,
-                        "name": row.get("name") or symbol,
-                        "price": round(price, 4),
-                        "previous_close": round(prev, 4),
-                        "change": round(change, 4),
-                        "change_percent": round(pct, 4),
-                        "volume": row.get("volume"),
-                        "market_cap": row.get("marketCap"),
-                        "currency": "USD",
-                        "provider": "fmp",
-                        "mock": False,
-                        "as_of": _now(),
-                    }
+            quote = _quote_from_fmp(symbol)
+            if quote:
+                return quote
             errors.append("FMP empty quote")
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"FMP: {exc}")
+            errors.append(_err("FMP", exc))
 
     # 2) Alpha Vantage
     if _av_key():
         try:
-            data = _get_json(
-                "https://www.alphavantage.co/query",
-                {
-                    "function": "GLOBAL_QUOTE",
-                    "symbol": symbol,
-                    "apikey": _av_key(),
-                },
-            )
-            q = (data or {}).get("Global Quote") or {}
-            price = float(q.get("05. price") or 0)
-            prev = float(q.get("08. previous close") or price)
-            if price > 0:
-                change = float(q.get("09. change") or (price - prev))
-                pct_raw = str(q.get("10. change percent") or "0").replace("%", "")
-                pct = float(pct_raw or 0)
-                return {
-                    "symbol": symbol,
-                    "name": symbol,
-                    "price": round(price, 4),
-                    "previous_close": round(prev, 4),
-                    "change": round(change, 4),
-                    "change_percent": round(pct, 4),
-                    "volume": int(float(q.get("06. volume") or 0)),
-                    "market_cap": None,
-                    "currency": "USD",
-                    "provider": "alpha_vantage",
-                    "mock": False,
-                    "as_of": _now(),
-                }
+            quote = _quote_from_alpha_vantage(symbol)
+            if quote:
+                return quote
             errors.append("Alpha Vantage empty quote")
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"Alpha Vantage: {exc}")
+            errors.append(_err("Alpha Vantage", exc))
 
-    # 3) Mock fallback
-    reason = "; ".join(errors) if errors else "no provider configured"
+    # 3) Yahoo Finance (no API key)
+    try:
+        quote = _quote_from_yahoo(symbol)
+        if quote:
+            return quote
+        errors.append("Yahoo empty quote")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(_err("Yahoo", exc))
+
+    # 4) Mock fallback
+    reason = _redact_secrets("; ".join(errors) if errors else "no provider configured")
     base = _base_mock(symbol)
     price = float(base["price"])
     prev = float(base["previous_close"])
@@ -172,78 +291,153 @@ def fetch_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _history_from_fmp(symbol: str, limit: int) -> dict[str, Any] | None:
+    data = _get_json(
+        f"{FMP_STABLE}/historical-price-eod/full",
+        {"symbol": symbol, "apikey": _fmp_key()},
+    )
+    hist: list[dict[str, Any]] = []
+    if isinstance(data, dict):
+        hist = list(data.get("historical") or [])
+    elif isinstance(data, list):
+        hist = list(data)
+    if not hist:
+        return None
+    rows = []
+    for row in reversed(hist[:limit]):
+        rows.append(
+            {
+                "date": row.get("date"),
+                "open": row.get("open"),
+                "high": row.get("high"),
+                "low": row.get("low"),
+                "close": row.get("close"),
+                "volume": row.get("volume"),
+            }
+        )
+    if not rows:
+        return None
+    return {
+        "symbol": symbol,
+        "period": f"{limit}d",
+        "bars": rows,
+        "provider": "fmp",
+        "mock": False,
+    }
+
+
+def _history_from_alpha_vantage(symbol: str, limit: int) -> dict[str, Any] | None:
+    data = _get_json(
+        "https://www.alphavantage.co/query",
+        {
+            "function": "TIME_SERIES_DAILY",
+            "symbol": symbol,
+            "outputsize": "compact",
+            "apikey": _av_key(),
+        },
+    )
+    if isinstance(data, dict) and (data.get("Note") or data.get("Information")):
+        raise RuntimeError(str(data.get("Note") or data.get("Information")))
+    series = (data or {}).get("Time Series (Daily)") or {}
+    if not series:
+        return None
+    rows = []
+    for date, row in list(sorted(series.items()))[-limit:]:
+        rows.append(
+            {
+                "date": date,
+                "open": float(row.get("1. open")),
+                "high": float(row.get("2. high")),
+                "low": float(row.get("3. low")),
+                "close": float(row.get("4. close")),
+                "volume": float(row.get("5. volume")),
+            }
+        )
+    return {
+        "symbol": symbol,
+        "period": f"{limit}d",
+        "bars": rows,
+        "provider": "alpha_vantage",
+        "mock": False,
+    }
+
+
+def _history_from_yahoo(symbol: str, limit: int) -> dict[str, Any] | None:
+    # ~1.5 trading months covers most technical windows used downstream.
+    data = _get_json(
+        f"{YAHOO_CHART}/{symbol}",
+        {"interval": "1d", "range": "6mo"},
+        headers=YAHOO_HEADERS,
+    )
+    result = ((data or {}).get("chart") or {}).get("result") or []
+    if not result:
+        return None
+    node = result[0]
+    timestamps = node.get("timestamp") or []
+    quote = ((node.get("indicators") or {}).get("quote") or [{}])[0]
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    closes = quote.get("close") or []
+    volumes = quote.get("volume") or []
+    rows = []
+    for idx, ts in enumerate(timestamps):
+        close = closes[idx] if idx < len(closes) else None
+        if close is None:
+            continue
+        rows.append(
+            {
+                "date": datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat(),
+                "open": opens[idx] if idx < len(opens) else None,
+                "high": highs[idx] if idx < len(highs) else None,
+                "low": lows[idx] if idx < len(lows) else None,
+                "close": close,
+                "volume": volumes[idx] if idx < len(volumes) else None,
+            }
+        )
+    if not rows:
+        return None
+    rows = rows[-limit:]
+    return {
+        "symbol": symbol,
+        "period": f"{limit}d",
+        "bars": rows,
+        "provider": "yahoo",
+        "mock": False,
+    }
+
+
 def fetch_history(symbol: str, limit: int = 30) -> dict[str, Any]:
     symbol = _sym(symbol)
     errors: list[str] = []
 
     if _fmp_key():
         try:
-            data = _get_json(
-                f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}",
-                {"timeseries": limit, "apikey": _fmp_key()},
-            )
-            hist = (data or {}).get("historical") or []
+            hist = _history_from_fmp(symbol, limit)
             if hist:
-                rows = []
-                for row in reversed(hist[:limit]):
-                    rows.append(
-                        {
-                            "date": row.get("date"),
-                            "open": row.get("open"),
-                            "high": row.get("high"),
-                            "low": row.get("low"),
-                            "close": row.get("close"),
-                            "volume": row.get("volume"),
-                        }
-                    )
-                return {
-                    "symbol": symbol,
-                    "period": f"{limit}d",
-                    "bars": rows,
-                    "provider": "fmp",
-                    "mock": False,
-                }
+                return hist
             errors.append("FMP empty history")
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"FMP history: {exc}")
+            errors.append(_err("FMP history", exc))
 
     if _av_key():
         try:
-            data = _get_json(
-                "https://www.alphavantage.co/query",
-                {
-                    "function": "TIME_SERIES_DAILY",
-                    "symbol": symbol,
-                    "outputsize": "compact",
-                    "apikey": _av_key(),
-                },
-            )
-            series = (data or {}).get("Time Series (Daily)") or {}
-            if series:
-                rows = []
-                for date, row in list(sorted(series.items()))[-limit:]:
-                    rows.append(
-                        {
-                            "date": date,
-                            "open": float(row.get("1. open")),
-                            "high": float(row.get("2. high")),
-                            "low": float(row.get("3. low")),
-                            "close": float(row.get("4. close")),
-                            "volume": float(row.get("5. volume")),
-                        }
-                    )
-                return {
-                    "symbol": symbol,
-                    "period": f"{limit}d",
-                    "bars": rows,
-                    "provider": "alpha_vantage",
-                    "mock": False,
-                }
+            hist = _history_from_alpha_vantage(symbol, limit)
+            if hist:
+                return hist
             errors.append("Alpha Vantage empty history")
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"Alpha Vantage history: {exc}")
+            errors.append(_err("Alpha Vantage history", exc))
 
-    reason = "; ".join(errors) if errors else "no provider configured"
+    try:
+        hist = _history_from_yahoo(symbol, limit)
+        if hist:
+            return hist
+        errors.append("Yahoo empty history")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(_err("Yahoo history", exc))
+
+    reason = _redact_secrets("; ".join(errors) if errors else "no provider configured")
     quote = fetch_quote(symbol)
     price = float(quote["price"])
     now = datetime.now(timezone.utc)
@@ -280,12 +474,12 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
     if _fmp_key():
         try:
             profile = _get_json(
-                f"https://financialmodelingprep.com/api/v3/profile/{symbol}",
-                {"apikey": _fmp_key()},
+                f"{FMP_STABLE}/profile",
+                {"symbol": symbol, "apikey": _fmp_key()},
             )
             metrics = _get_json(
-                f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{symbol}",
-                {"apikey": _fmp_key()},
+                f"{FMP_STABLE}/key-metrics-ttm",
+                {"symbol": symbol, "apikey": _fmp_key()},
             )
             p = profile[0] if isinstance(profile, list) and profile else {}
             m = metrics[0] if isinstance(metrics, list) and metrics else {}
@@ -304,13 +498,13 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
                     "dividendYield": p.get("lastDiv"),
                     "recommendationKey": None,
                     "targetMeanPrice": None,
-                    "marketCap": p.get("mktCap"),
+                    "marketCap": p.get("mktCap") or p.get("marketCap"),
                     "provider": "fmp",
                     "mock": False,
                 }
             errors.append("FMP empty fundamentals")
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"FMP fundamentals: {exc}")
+            errors.append(_err("FMP fundamentals", exc))
 
     if _av_key():
         try:
@@ -339,9 +533,9 @@ def fetch_fundamentals(symbol: str) -> dict[str, Any]:
                 }
             errors.append("Alpha Vantage empty overview")
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"Alpha Vantage overview: {exc}")
+            errors.append(_err("Alpha Vantage overview", exc))
 
-    reason = "; ".join(errors) if errors else "no provider configured"
+    reason = _redact_secrets("; ".join(errors) if errors else "no provider configured")
     quote = fetch_quote(symbol)
     logger.warning("[MOCK] fundamentals(%s): %s", symbol, reason)
     return {
@@ -393,13 +587,11 @@ def fetch_technicals(symbol: str) -> dict[str, Any]:
     sma20 = sum(closes[-20:]) / min(20, len(closes))
     sma50 = sum(closes[-50:]) / min(50, len(closes)) if len(closes) >= 20 else sma20
 
-    # EMA12
     ema = closes[0]
     k = 2 / (12 + 1)
     for c in closes[1:]:
         ema = c * k + ema * (1 - k)
 
-    # RSI14 rough
     gains = []
     losses = []
     for i in range(1, len(closes)):

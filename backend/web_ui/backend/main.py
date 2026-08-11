@@ -145,6 +145,7 @@ async def get_system_status() -> dict[str, Any]:
             "fmp_api_key": bool(os.getenv("FMP_API_KEY")),
             "alpha_vantage_api_key": bool(os.getenv("ALPHA_VANTAGE_API_KEY")),
             "marketaux_api_key": bool(os.getenv("MARKETAUX_API_KEY")),
+            "yahoo_fallback": True,
         },
         "timestamp": datetime.now().isoformat(),
     }
