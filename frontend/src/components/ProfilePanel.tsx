@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useI18n } from '../i18n'
 import type { UserProfile } from '../types'
 
 type Props = {
@@ -11,22 +12,24 @@ type Props = {
   }) => Promise<void>
 }
 
-const STRATEGY_LABELS: Record<string, string> = {
-  orchestrator: 'Orchestrator',
-  market_data: 'Market Data',
-  fundamentals: 'Fundamentals',
-  technical: 'Technical',
-  sentiment: 'Sentiment',
-  risk: 'Risk',
-  verifier: 'Verifier',
-}
+const STRATEGY_KEYS = [
+  'orchestrator',
+  'market_data',
+  'fundamentals',
+  'technical',
+  'sentiment',
+  'risk',
+  'verifier',
+] as const
 
 export default function ProfilePanel({ profile, connected, onSave }: Props) {
+  const { t, tf } = useI18n()
   const [displayName, setDisplayName] = useState('Trader')
   const [watchlistText, setWatchlistText] = useState('AAPL, MSFT, NVDA')
   const [strategies, setStrategies] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [msgOk, setMsgOk] = useState(false)
 
   useEffect(() => {
     if (!profile) return
@@ -38,6 +41,7 @@ export default function ProfilePanel({ profile, connected, onSave }: Props) {
   async function save() {
     setBusy(true)
     setMsg(null)
+    setMsgOk(false)
     try {
       const watchlist = watchlistText
         .split(/[,\s]+/)
@@ -48,9 +52,11 @@ export default function ProfilePanel({ profile, connected, onSave }: Props) {
         watchlist,
         agent_strategies: strategies,
       })
-      setMsg('Profile saved')
+      setMsg(t.profile.saved)
+      setMsgOk(true)
     } catch (err) {
       setMsg(err instanceof Error ? err.message : String(err))
+      setMsgOk(false)
     } finally {
       setBusy(false)
     }
@@ -60,10 +66,10 @@ export default function ProfilePanel({ profile, connected, onSave }: Props) {
     <div className="flex-1 overflow-y-auto p-6" style={{ color: '#8892a4' }}>
       <div className="mb-6">
         <h2 className="text-sm font-semibold mono tracking-wider" style={{ color: '#5a6175' }}>
-          USER PROFILE
+          {t.profile.title}
         </h2>
         <p className="text-xs mt-0.5" style={{ color: '#3a4155' }}>
-          Chat history, watchlist, and per-agent strategies
+          {t.profile.subtitle}
         </p>
       </div>
 
@@ -73,7 +79,7 @@ export default function ProfilePanel({ profile, connected, onSave }: Props) {
       >
         <div>
           <label className="text-[10px] mono tracking-widest block mb-2" style={{ color: '#3a4155' }}>
-            DISPLAY NAME
+            {t.profile.displayName}
           </label>
           <input
             value={displayName}
@@ -85,7 +91,7 @@ export default function ProfilePanel({ profile, connected, onSave }: Props) {
 
         <div>
           <label className="text-[10px] mono tracking-widest block mb-2" style={{ color: '#3a4155' }}>
-            WATCHLIST
+            {t.profile.watchlist}
           </label>
           <input
             value={watchlistText}
@@ -98,13 +104,13 @@ export default function ProfilePanel({ profile, connected, onSave }: Props) {
 
         <div>
           <p className="text-[10px] mono tracking-widest mb-3" style={{ color: '#3a4155' }}>
-            AGENT STRATEGIES
+            {t.profile.strategies}
           </p>
           <div className="space-y-3">
-            {Object.keys(STRATEGY_LABELS).map((key) => (
+            {STRATEGY_KEYS.map((key) => (
               <div key={key}>
                 <label className="text-xs mono block mb-1" style={{ color: '#8892a4' }}>
-                  {STRATEGY_LABELS[key]}
+                  {t.agents.names[key]}
                 </label>
                 <textarea
                   rows={2}
@@ -134,13 +140,13 @@ export default function ProfilePanel({ profile, connected, onSave }: Props) {
               color: '#00e676',
             }}
           >
-            SAVE PROFILE
+            {t.profile.save}
           </button>
           <span className="text-[11px] mono" style={{ color: '#5a6175' }}>
-            Chat messages: {profile?.chat_history?.length ?? 0}
+            {tf(t.profile.chatCount, { count: profile?.chat_history?.length ?? 0 })}
           </span>
           {msg ? (
-            <span className="text-[11px] mono" style={{ color: msg === 'Profile saved' ? '#00e676' : '#ff4d6a' }}>
+            <span className="text-[11px] mono" style={{ color: msgOk ? '#00e676' : '#ff4d6a' }}>
               {msg}
             </span>
           ) : null}

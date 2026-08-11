@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useI18n } from '../i18n'
 import type { SelfDrivingStatus } from '../types'
 
 type Props = {
@@ -34,6 +35,7 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
 }
 
 export default function SelfDrivePanel({ status, connected, onUpdate, onForceTick }: Props) {
+  const { t, tf, locale } = useI18n()
   const [symbolsText, setSymbolsText] = useState('AAPL, MSFT')
   const [intervalMinutes, setIntervalMinutes] = useState(5)
   const [analyzeOnTick, setAnalyzeOnTick] = useState(true)
@@ -68,20 +70,26 @@ export default function SelfDrivePanel({ status, connected, onUpdate, onForceTic
       .filter(Boolean)
   }
 
+  const statusVal = enabled
+    ? status?.running
+      ? t.selfdrive.running
+      : t.selfdrive.enabled
+    : t.selfdrive.off
+
   return (
     <div className="flex-1 overflow-y-auto p-6" style={{ color: '#8892a4' }}>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-sm font-semibold mono tracking-wider" style={{ color: '#5a6175' }}>
-            SELF-DRIVING LOOP
+            {t.selfdrive.title}
           </h2>
           <p className="text-xs mt-0.5" style={{ color: '#3a4155' }}>
-            Event-driven price tracking via LangGraph backend
+            {t.selfdrive.subtitle}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[10px] mono" style={{ color: connected ? '#00e676' : '#ff4d6a' }}>
-            {connected ? 'BACKEND ONLINE' : 'BACKEND OFFLINE'}
+            {connected ? t.selfdrive.backendOnline : t.selfdrive.backendOffline}
           </span>
           <Toggle
             on={enabled}
@@ -98,7 +106,7 @@ export default function SelfDrivePanel({ status, connected, onUpdate, onForceTic
       >
         <div>
           <label className="text-[10px] mono tracking-widest block mb-2" style={{ color: '#3a4155' }}>
-            SYMBOLS
+            {t.selfdrive.symbols}
           </label>
           <input
             value={symbolsText}
@@ -115,7 +123,7 @@ export default function SelfDrivePanel({ status, connected, onUpdate, onForceTic
 
         <div>
           <label className="text-[10px] mono tracking-widest block mb-2" style={{ color: '#3a4155' }}>
-            INTERVAL (MINUTES)
+            {t.selfdrive.interval}
           </label>
           <input
             type="number"
@@ -133,7 +141,7 @@ export default function SelfDrivePanel({ status, connected, onUpdate, onForceTic
         </div>
 
         <div className="flex items-center justify-between">
-          <span className="text-sm">Run LangGraph analysis on each tick</span>
+          <span className="text-sm">{t.selfdrive.analyzeOnTick}</span>
           <Toggle on={analyzeOnTick} onClick={() => setAnalyzeOnTick((v) => !v)} />
         </div>
 
@@ -157,7 +165,7 @@ export default function SelfDrivePanel({ status, connected, onUpdate, onForceTic
               color: '#00e676',
             }}
           >
-            SAVE SETTINGS
+            {t.selfdrive.save}
           </button>
           <button
             type="button"
@@ -170,7 +178,7 @@ export default function SelfDrivePanel({ status, connected, onUpdate, onForceTic
               color: '#00d4ff',
             }}
           >
-            TICK NOW
+            {t.selfdrive.tickNow}
           </button>
         </div>
 
@@ -183,10 +191,26 @@ export default function SelfDrivePanel({ status, connected, onUpdate, onForceTic
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 max-w-3xl">
         {[
-          { label: 'STATUS', val: enabled ? (status?.running ? 'RUNNING' : 'ENABLED') : 'OFF', color: enabled ? '#00e676' : '#5a6175' },
-          { label: 'TICKS', val: String(status?.tick_count ?? 0), color: '#00d4ff' },
-          { label: 'LAST TICK', val: status?.last_tick_at ? new Date(status.last_tick_at).toLocaleTimeString() : '—', color: '#8892a4' },
-          { label: 'NEXT TICK', val: status?.next_tick_at ? new Date(status.next_tick_at).toLocaleTimeString() : '—', color: '#8892a4' },
+          {
+            label: t.selfdrive.status,
+            val: statusVal,
+            color: enabled ? '#00e676' : '#5a6175',
+          },
+          { label: t.selfdrive.ticks, val: String(status?.tick_count ?? 0), color: '#00d4ff' },
+          {
+            label: t.selfdrive.lastTick,
+            val: status?.last_tick_at
+              ? new Date(status.last_tick_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US')
+              : '—',
+            color: '#8892a4',
+          },
+          {
+            label: t.selfdrive.nextTick,
+            val: status?.next_tick_at
+              ? new Date(status.next_tick_at).toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US')
+              : '—',
+            color: '#8892a4',
+          },
         ].map((s) => (
           <div
             key={s.label}
@@ -205,14 +229,14 @@ export default function SelfDrivePanel({ status, connected, onUpdate, onForceTic
 
       {status?.last_error ? (
         <p className="mt-4 text-xs mono" style={{ color: '#ff4d6a' }}>
-          Last error: {status.last_error}
+          {tf(t.selfdrive.lastError, { error: status.last_error })}
         </p>
       ) : null}
 
       {status?.last_prices && Object.keys(status.last_prices).length > 0 ? (
         <div className="mt-6 max-w-3xl">
           <p className="text-[10px] mono tracking-widest mb-3" style={{ color: '#3a4155' }}>
-            LAST PRICES
+            {t.selfdrive.lastPrices}
           </p>
           <div className="space-y-2">
             {Object.entries(status.last_prices).map(([symbol, raw]) => {

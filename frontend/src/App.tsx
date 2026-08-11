@@ -4,15 +4,11 @@ import SelfDrivePanel from './components/SelfDrivePanel'
 import AgentsPage from './components/AgentsPage'
 import ProfilePanel from './components/ProfilePanel'
 import { useStockBackend } from './hooks/useStockBackend'
+import { useI18n } from './i18n'
 import type { Stock, Tab } from './types'
 
 const FALLBACK_STOCKS: Stock[] = [
   { ticker: 'AAPL', name: 'Apple Inc', price: 0, change: 0, pct: 0, vol: '—', mktcap: '—', spark: [1, 1, 1, 1, 1, 1, 1, 1] },
-]
-
-const INDICES = [
-  { name: 'S&P 500', val: '—', pct: 'live', pos: true },
-  { name: 'DATA', val: 'FMP/AV', pct: 'quotes', pos: true },
 ]
 
 function Sparkline({ data, pos }: { data: number[]; pos: boolean }) {
@@ -71,9 +67,8 @@ function MiniChart({ stock }: { stock: Stock }) {
   )
 }
 
-const QUICK = ['Analyze NVDA', 'Should I buy AAPL?', 'Technical analysis for TSLA', 'Compare MSFT vs GOOGL']
-
 export default function App() {
+  const { t, tf, locale, toggleLocale } = useI18n()
   const {
     connectionStatus,
     connected,
@@ -126,8 +121,8 @@ export default function App() {
   }
 
   function addStock() {
-    const t = tickerInput.trim().toUpperCase()
-    if (!t) {
+    const ticker = tickerInput.trim().toUpperCase()
+    if (!ticker) {
       setAddingTicker(false)
       setTickerInput('')
       return
@@ -135,12 +130,12 @@ export default function App() {
     const current = profile?.watchlist?.length
       ? profile.watchlist
       : stocks.map((s) => s.ticker)
-    if (current.includes(t)) {
+    if (current.includes(ticker)) {
       setAddingTicker(false)
       setTickerInput('')
       return
     }
-    const nextList = [...current, t]
+    const nextList = [...current, ticker]
     void saveProfile({ watchlist: nextList }).then(() => refreshQuotes(nextList))
     setTickerInput('')
     setAddingTicker(false)
@@ -153,27 +148,59 @@ export default function App() {
     const nextList = current.filter((s) => s !== ticker.toUpperCase())
     if (!nextList.length) return
     void saveProfile({ watchlist: nextList }).then(() => refreshQuotes(nextList))
-    if (selected.ticker === ticker && nextList[0]) {
-      // selected will sync from stocks effect after refresh
-    }
   }
 
   function analyzeSelected() {
-    sendQuery(`Give me a comprehensive analysis of ${selected.ticker}`)
+    sendQuery(tf(t.queries.comprehensive, { ticker: selected.ticker }))
     setTab('chat')
   }
 
   const statusColor =
     connectionStatus === 'connected' ? '#00e676' : connectionStatus === 'connecting' ? '#f5a623' : '#ff4d6a'
 
+  const statusLabel =
+    connectionStatus === 'connected'
+      ? t.status.connected
+      : connectionStatus === 'connecting'
+        ? t.status.connecting
+        : t.status.disconnected
+
   const displayStocks = stocks.length ? stocks : FALLBACK_STOCKS
 
+  const indices = [
+    { name: t.header.indexSp, val: '—', pct: t.header.indexLive, pos: true },
+    { name: t.header.indexData, val: 'FMP/AV', pct: t.header.indexQuotes, pos: true },
+  ]
+
+  const navItems = [
+    { id: 'chat' as Tab, icon: '⌨', label: t.nav.chat },
+    { id: 'watchlist' as Tab, icon: '◉', label: t.nav.watch },
+    { id: 'selfdrive' as Tab, icon: '⟳', label: t.nav.drive },
+    { id: 'agents' as Tab, icon: '⬡', label: t.nav.agents },
+    { id: 'profile' as Tab, icon: '👤', label: t.nav.profile },
+    { id: 'settings' as Tab, icon: '⚙', label: t.nav.settings },
+  ]
 
   return (
     <div className="flex flex-col h-screen" style={{ background: '#07080d', color: '#e8eaf0', fontFamily: "'Inter', sans-serif" }}>
       <header style={{ background: '#0e1018', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         <div className="flex items-center h-11 px-4 gap-6">
           <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={toggleLocale}
+              title={t.langToggleTitle}
+              aria-label={t.langToggleTitle}
+              className="text-[10px] mono px-2 py-1 rounded font-semibold transition-all hover:opacity-80"
+              style={{
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                color: '#c8ccd8',
+                minWidth: 40,
+              }}
+            >
+              {t.langToggle}
+            </button>
             <div
               className="w-6 h-6 rounded flex items-center justify-center"
               style={{ background: 'rgba(0,230,118,0.15)', border: '1px solid rgba(0,230,118,0.3)' }}
@@ -182,7 +209,7 @@ export default function App() {
                 ◈
               </span>
             </div>
-            <span className="text-sm font-semibold tracking-tight">StockAgent</span>
+            <span className="text-sm font-semibold tracking-tight">{t.brand}</span>
             <span
               className="text-[10px] mono px-1.5 py-0.5 rounded"
               style={{
@@ -191,12 +218,12 @@ export default function App() {
                 border: '1px solid rgba(0,230,118,0.2)',
               }}
             >
-              LANGGRAPH
+              {t.engineTag}
             </span>
           </div>
 
           <div className="flex items-center gap-5 flex-1 overflow-x-auto">
-            {INDICES.map((idx) => (
+            {indices.map((idx) => (
               <div key={idx.name} className="flex items-center gap-2 shrink-0">
                 <span className="text-[11px] mono" style={{ color: '#3a4155' }}>
                   {idx.name}
@@ -223,17 +250,19 @@ export default function App() {
                 }`,
                 color: selfDriving?.enabled ? '#00d4ff' : '#8892a4',
               }}
-              title="Open Self-Driving controls"
+              title={t.header.selfDriveTitle}
             >
               <span
                 className="w-1.5 h-1.5 rounded-full"
                 style={{ background: selfDriving?.enabled ? '#00d4ff' : '#5a6175' }}
               />
-              SELF-DRIVE · {selfDriving?.enabled ? `ON · ${selfDriving.interval_minutes}m` : 'OFF'}
+              {selfDriving?.enabled
+                ? tf(t.header.selfDriveOn, { minutes: selfDriving.interval_minutes })
+                : t.header.selfDriveOff}
             </button>
             <span className="w-1.5 h-1.5 rounded-full pulse-dot" style={{ background: statusColor }} />
             <span className="text-[11px] mono" style={{ color: '#5a6175' }}>
-              {connectionStatus.toUpperCase()} · {engineLabel}
+              {statusLabel} · {engineLabel}
             </span>
           </div>
         </div>
@@ -244,16 +273,7 @@ export default function App() {
           className="w-[72px] flex flex-col items-center py-4 gap-2 shrink-0"
           style={{ background: '#0e1018', borderRight: '1px solid rgba(255,255,255,0.06)' }}
         >
-          {(
-            [
-              { id: 'chat' as Tab, icon: '⌨', label: 'Chat' },
-              { id: 'watchlist' as Tab, icon: '◉', label: 'Watch' },
-              { id: 'selfdrive' as Tab, icon: '⟳', label: 'Drive' },
-              { id: 'agents' as Tab, icon: '⬡', label: 'Agents' },
-              { id: 'profile' as Tab, icon: '👤', label: 'Profile' },
-              { id: 'settings' as Tab, icon: '⚙', label: 'Settings' },
-            ] as const
-          ).map((item) => (
+          {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setTab(item.id)}
@@ -281,7 +301,6 @@ export default function App() {
           {tab === 'chat' && (
             <div className="flex flex-1 min-w-0 min-h-0">
               <div className="flex flex-col flex-1 min-w-0 min-h-0">
-                {/* Quick self-drive strip */}
                 <div
                   className="px-5 py-2.5 flex items-center gap-3 shrink-0"
                   style={{
@@ -290,7 +309,7 @@ export default function App() {
                   }}
                 >
                   <span className="text-[10px] mono tracking-widest" style={{ color: '#3a4155' }}>
-                    SELF-DRIVE
+                    {t.chat.selfDrive}
                   </span>
                   <button
                     type="button"
@@ -316,12 +335,15 @@ export default function App() {
                       color: selfDriving?.enabled ? '#00e676' : '#8892a4',
                     }}
                   >
-                    {selfDriving?.enabled ? 'ON' : 'OFF'}
+                    {selfDriving?.enabled ? t.chat.on : t.chat.off}
                   </button>
                   <span className="text-[11px] mono" style={{ color: '#5a6175' }}>
                     {selfDriving?.enabled
-                      ? `${(selfDriving.symbols || []).join(', ') || selected.ticker} · every ${selfDriving.interval_minutes}m`
-                      : `Flip ON to track ${selected.ticker}`}
+                      ? tf(t.chat.tracking, {
+                          symbols: (selfDriving.symbols || []).join(', ') || selected.ticker,
+                          minutes: selfDriving.interval_minutes,
+                        })
+                      : tf(t.chat.flipOn, { ticker: selected.ticker })}
                   </span>
                   <button
                     type="button"
@@ -333,7 +355,7 @@ export default function App() {
                       background: 'rgba(0,212,255,0.06)',
                     }}
                   >
-                    SETTINGS →
+                    {t.chat.settings}
                   </button>
                 </div>
 
@@ -355,16 +377,16 @@ export default function App() {
                       }}
                     >
                       <span style={{ color: '#00e676' }}>
-                        LAST: {recommendation.recommendation.toUpperCase()}
+                        {tf(t.chat.last, { rec: recommendation.recommendation.toUpperCase() })}
                       </span>
                       <span>{Math.round(recommendation.confidence * 100)}%</span>
-                      {recommendation.verified ? <span style={{ color: '#00d4ff' }}>VERIFIED</span> : null}
+                      {recommendation.verified ? <span style={{ color: '#00d4ff' }}>{t.chat.verified}</span> : null}
                     </div>
                   </div>
                 ) : null}
 
                 <div className="px-5 pb-2 flex gap-2 flex-wrap">
-                  {QUICK.map((q) => (
+                  {t.quick.map((q) => (
                     <button
                       key={q}
                       onClick={() => {
@@ -393,7 +415,7 @@ export default function App() {
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={handleKey}
-                      placeholder={connected ? 'Ask LangGraph to analyze a stock…' : 'Backend offline — start API on :8000'}
+                      placeholder={connected ? t.chat.placeholderOnline : t.chat.placeholderOffline}
                       className="flex-1 resize-none bg-transparent outline-none text-sm leading-relaxed placeholder-[#3a4155] mono"
                       style={{ color: '#d8dce8', fontFamily: "'JetBrains Mono', monospace", minHeight: 22, maxHeight: 120 }}
                     />
@@ -432,7 +454,7 @@ export default function App() {
                       <p className="text-xs mono font-medium" style={{ color: selected.pct >= 0 ? '#00e676' : '#ff4d6a' }}>
                         {selected.price > 0
                           ? `${selected.pct >= 0 ? '+' : ''}${selected.pct.toFixed(2)}%`
-                          : 'loading'}
+                          : t.chat.loading}
                       </p>
                     </div>
                   </div>
@@ -452,7 +474,7 @@ export default function App() {
                       color: '#00e676',
                     }}
                   >
-                    ANALYZE
+                    {t.chat.analyze}
                   </button>
                   <button
                     onClick={() => {
@@ -472,14 +494,14 @@ export default function App() {
                       color: '#00d4ff',
                     }}
                   >
-                    TRACK
+                    {t.chat.track}
                   </button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                   <div className="flex items-center justify-between px-4 py-2">
                     <span className="text-[10px] mono tracking-widest" style={{ color: '#3a4155' }}>
-                      TRACKING
+                      {t.chat.trackingList}
                     </span>
                     <button
                       onClick={() => {
@@ -506,13 +528,13 @@ export default function App() {
                           if (e.key === 'Enter') addStock()
                           if (e.key === 'Escape') setAddingTicker(false)
                         }}
-                        placeholder="TICKER"
+                        placeholder={t.chat.ticker}
                         maxLength={5}
                         className="flex-1 bg-transparent outline-none mono text-xs"
                         style={{ color: '#00e676' }}
                       />
                       <button onClick={addStock} className="text-[10px] mono" style={{ color: '#00e676' }}>
-                        ADD
+                        {t.chat.add}
                       </button>
                     </div>
                   )}
@@ -547,7 +569,7 @@ export default function App() {
                       </button>
                       <button
                         type="button"
-                        title="Remove from profile watchlist"
+                        title={t.chat.removeWatchlist}
                         onClick={() => removeStock(s.ticker)}
                         className="text-[10px] mono px-1.5 py-1 rounded shrink-0"
                         style={{ color: '#ff4d6a', border: '1px solid rgba(255,77,106,0.25)' }}
@@ -564,7 +586,7 @@ export default function App() {
           {tab === 'watchlist' && (
             <div className="flex-1 overflow-y-auto p-6">
               <div className="flex items-center justify-between mb-6">
-                <h2 className="text-base font-semibold mono">WATCHLIST</h2>
+                <h2 className="text-base font-semibold mono">{t.watchlist.title}</h2>
                 <div className="flex gap-2 items-center">
                   <button
                     onClick={() => {
@@ -584,7 +606,7 @@ export default function App() {
                       color: '#00d4ff',
                     }}
                   >
-                    TRACK ALL
+                    {t.watchlist.trackAll}
                   </button>
                   <button
                     onClick={() => {
@@ -598,7 +620,7 @@ export default function App() {
                       color: '#00e676',
                     }}
                   >
-                    + ADD TICKER
+                    {t.watchlist.addTicker}
                   </button>
                 </div>
               </div>
@@ -613,7 +635,7 @@ export default function App() {
                       if (e.key === 'Enter') addStock()
                       if (e.key === 'Escape') setAddingTicker(false)
                     }}
-                    placeholder="TICKER"
+                    placeholder={t.chat.ticker}
                     maxLength={5}
                     className="flex-1 bg-transparent outline-none mono text-sm px-3 py-2 rounded"
                     style={{ color: '#00e676', border: '1px solid rgba(0,230,118,0.3)' }}
@@ -623,7 +645,7 @@ export default function App() {
                     className="text-[11px] mono px-3 py-2 rounded"
                     style={{ color: '#00e676', border: '1px solid rgba(0,230,118,0.25)' }}
                   >
-                    ADD
+                    {t.watchlist.add}
                   </button>
                 </div>
               )}
@@ -654,26 +676,26 @@ export default function App() {
                     </span>
                     <button
                       onClick={() => {
-                        sendQuery(`Analyze ${s.ticker}`)
+                        sendQuery(tf(t.queries.analyze, { ticker: s.ticker }))
                         setTab('chat')
                       }}
                       className="text-[10px] mono px-2 py-1 rounded"
                       style={{ color: '#00e676', border: '1px solid rgba(0,230,118,0.25)' }}
                     >
-                      ANALYZE
+                      {t.watchlist.analyze}
                     </button>
                     <button
                       onClick={() => removeStock(s.ticker)}
                       className="text-[10px] mono px-2 py-1 rounded"
                       style={{ color: '#ff4d6a', border: '1px solid rgba(255,77,106,0.25)' }}
                     >
-                      REMOVE
+                      {t.watchlist.remove}
                     </button>
                   </div>
                 ))}
               </div>
               <p className="text-[11px] mono mt-3" style={{ color: '#3a4155' }}>
-                Add/remove updates your profile watchlist automatically.
+                {t.watchlist.hint}
               </p>
             </div>
           )}
@@ -702,31 +724,29 @@ export default function App() {
           {tab === 'settings' && (
             <div className="flex-1 overflow-y-auto p-6" style={{ color: '#8892a4' }}>
               <h2 className="text-sm font-semibold mono tracking-wider mb-4" style={{ color: '#5a6175' }}>
-                BACKEND SETTINGS
+                {t.settings.title}
               </h2>
               <div
                 className="rounded-lg p-5 max-w-lg space-y-3 text-sm"
                 style={{ background: '#0e1018', border: '1px solid rgba(255,255,255,0.06)' }}
               >
                 <p>
-                  Engine: <span className="mono" style={{ color: '#00e676' }}>{engineLabel}</span>
+                  {t.settings.engine}: <span className="mono" style={{ color: '#00e676' }}>{engineLabel}</span>
                 </p>
                 <p>
-                  Connection:{' '}
+                  {t.settings.connection}:{' '}
                   <span className="mono" style={{ color: statusColor }}>
-                    {connectionStatus}
+                    {statusLabel}
                   </span>
                 </p>
                 <p>
-                  API: <span className="mono">{apiUrl}</span>
+                  {t.settings.api}: <span className="mono">{apiUrl}</span>
                 </p>
                 <p>
-                  WebSocket: <span className="mono">{wsUrl}</span>
+                  {t.settings.websocket}: <span className="mono">{wsUrl}</span>
                 </p>
                 <p className="text-xs" style={{ color: '#5a6175' }}>
-                  Set <span className="mono">VITE_API_URL</span> and <span className="mono">VITE_WS_URL</span> in
-                  Vercel Environments, then redeploy. On Render, set{' '}
-                  <span className="mono">CORS_ORIGINS</span> to this site URL.
+                  {t.settings.help}
                 </p>
               </div>
             </div>
@@ -740,15 +760,24 @@ export default function App() {
       >
         <span className="flex items-center gap-1.5">
           <span className="w-1 h-1 rounded-full" style={{ background: statusColor }} />
-          {connected ? 'Backend online' : 'Backend offline'}
+          {connected ? t.footer.online : t.footer.offline}
         </span>
         <span>|</span>
-        <span>Engine: {engineLabel}</span>
+        <span>{tf(t.footer.engine, { engine: engineLabel })}</span>
         <span>|</span>
-        <span>Self-drive: {selfDriving?.enabled ? 'ON' : 'OFF'}</span>
+        <span>
+          {tf(t.footer.selfDrive, {
+            state: selfDriving?.enabled ? t.chat.on : t.chat.off,
+          })}
+        </span>
         <div className="flex-1" />
         <span>
-          NYSE · {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+          NYSE ·{' '}
+          {new Date().toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+          })}
         </span>
       </div>
     </div>

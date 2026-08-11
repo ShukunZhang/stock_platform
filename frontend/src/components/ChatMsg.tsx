@@ -1,6 +1,8 @@
+import { useI18n } from '../i18n'
 import type { Msg } from '../types'
 
 export function ChatMsg({ msg }: { msg: Msg }) {
+  const { t } = useI18n()
   const isUser = msg.role === 'user'
   const isSystem = msg.role === 'system'
   return (
@@ -23,7 +25,7 @@ export function ChatMsg({ msg }: { msg: Msg }) {
           color: isUser ? '#00d4ff' : isSystem ? '#f5a623' : '#00e676',
         }}
       >
-        {isUser ? 'YOU' : isSystem ? 'SYS' : 'AI'}
+        {isUser ? t.chat.you : isSystem ? t.chat.sys : t.chat.ai}
       </div>
       <div className={`max-w-[78%] ${isUser ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
         <div
@@ -37,7 +39,8 @@ export function ChatMsg({ msg }: { msg: Msg }) {
         >
           {msg.thinking ? (
             <span className="text-[#5a6175]">
-              Analyzing<span className="cursor-blink">▊</span>
+              {t.chat.analyzing}
+              <span className="cursor-blink">▊</span>
             </span>
           ) : (
             <AgentText text={msg.text} />

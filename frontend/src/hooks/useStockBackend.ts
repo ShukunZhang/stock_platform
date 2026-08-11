@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useI18n } from '../i18n'
 import { backend } from '../services/backend'
 import type {
   AgentDef,
@@ -169,16 +170,24 @@ function quoteToStock(q: {
 }
 
 export function useStockBackend() {
+  const { t, locale } = useI18n()
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
   const [messages, setMessages] = useState<Msg[]>([
     {
       id: ++msgId,
       role: 'agent',
-      text: 'Ask for a stock analysis, or enable Self-Driving mode.\n\nStatus/errors appear under **Agents**. Profile stores chat, watchlist, and strategies.',
+      text: t.chat.welcome,
       ts: nowTs(),
     },
   ])
   const [thinking, setThinking] = useState(false)
+
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length !== 1 || prev[0].role !== 'agent' || prev[0].thinking) return prev
+      return [{ ...prev[0], text: t.chat.welcome }]
+    })
+  }, [locale, t.chat.welcome])
   const [selfDriving, setSelfDriving] = useState<SelfDrivingStatus | null>(null)
   const [recommendation, setRecommendation] = useState<FinalRecommendation | null>(null)
   const [agents, setAgents] = useState<AgentDef[]>(BASE_AGENTS)

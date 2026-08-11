@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useI18n } from '../i18n'
 import type { AgentDef, AgentStatus } from '../types'
 
 const STATUS_COLOR: Record<AgentStatus, string> = {
@@ -19,30 +20,41 @@ const STATUS_BG: Record<AgentStatus, string> = {
   completed: 'rgba(0,230,118,0.1)',
 }
 
+type AgentKey = keyof typeof import('../i18n/locales/en').en.agents.names
+
 export default function AgentsPage({ agents }: { agents: AgentDef[] }) {
+  const { t } = useI18n()
   const [expanded, setExpanded] = useState<string | null>(null)
   const running = agents.filter((a) => a.status === 'running' || a.status === 'processing').length
   const errors = agents.filter((a) => a.status === 'error').length
+
+  function labelFor(agent: AgentDef): { name: string; role: string } {
+    const key = agent.id as AgentKey
+    return {
+      name: t.agents.names[key] || agent.name,
+      role: t.agents.roles[key] || agent.role,
+    }
+  }
 
   return (
     <div className="flex-1 overflow-y-auto p-6" style={{ color: '#8892a4' }}>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-sm font-semibold mono tracking-wider" style={{ color: '#5a6175' }}>
-            AGENT FLEET
+            {t.agents.title}
           </h2>
           <p className="text-xs mt-0.5" style={{ color: '#3a4155' }}>
-            Specialist boxes · click a card for activity log
+            {t.agents.subtitle}
           </p>
         </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         {[
-          { label: 'TOTAL', val: agents.length, color: '#8892a4' },
-          { label: 'ACTIVE', val: running, color: '#00e676' },
-          { label: 'ERRORS', val: errors, color: errors > 0 ? '#ff4d6a' : '#5a6175' },
-          { label: 'ENGINE', val: 'LG', color: '#00d4ff' },
+          { label: t.agents.total, val: agents.length, color: '#8892a4' },
+          { label: t.agents.active, val: running, color: '#00e676' },
+          { label: t.agents.errors, val: errors, color: errors > 0 ? '#ff4d6a' : '#5a6175' },
+          { label: t.agents.engine, val: 'LG', color: '#00d4ff' },
         ].map((s) => (
           <div
             key={s.label}
@@ -59,12 +71,12 @@ export default function AgentsPage({ agents }: { agents: AgentDef[] }) {
         ))}
       </div>
 
-      {/* Responsive agent boxes: 1 → 2 → 3 columns */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
         {agents.map((agent) => {
           const pct =
             agent.tasksTotal > 0 ? Math.round((agent.tasksDone / agent.tasksTotal) * 100) : 0
           const isOpen = expanded === agent.id
+          const labels = labelFor(agent)
           return (
             <div
               key={agent.id}
@@ -94,7 +106,7 @@ export default function AgentsPage({ agents }: { agents: AgentDef[] }) {
                       }}
                     />
                     <span className="text-sm font-semibold mono truncate" style={{ color: '#e8eaf0' }}>
-                      {agent.name}
+                      {labels.name}
                     </span>
                   </div>
                   <span
@@ -109,7 +121,7 @@ export default function AgentsPage({ agents }: { agents: AgentDef[] }) {
                 </div>
 
                 <p className="text-xs mb-3 line-clamp-2" style={{ color: '#5a6175', minHeight: 32 }}>
-                  {agent.role}
+                  {labels.role}
                 </p>
 
                 <p className="text-[10px] mono mb-2 truncate" style={{ color: '#3a4155' }}>
@@ -118,7 +130,7 @@ export default function AgentsPage({ agents }: { agents: AgentDef[] }) {
 
                 <div className="mb-2">
                   <div className="flex justify-between text-[10px] mono mb-1" style={{ color: '#3a4155' }}>
-                    <span>Tasks</span>
+                    <span>{t.agents.tasks}</span>
                     <span>
                       {agent.tasksDone}/{agent.tasksTotal || '—'}
                     </span>
@@ -139,7 +151,7 @@ export default function AgentsPage({ agents }: { agents: AgentDef[] }) {
               {isOpen && (
                 <div className="px-4 pb-4" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                   <p className="text-[10px] mono mt-3 mb-2" style={{ color: '#3a4155' }}>
-                    ACTIVITY LOG
+                    {t.agents.activityLog}
                   </p>
                   <div
                     className="rounded p-3 space-y-1.5 font-mono text-[11px] overflow-y-auto max-h-28"
